@@ -3,11 +3,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
 
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 )
 
 type ProfilingJob struct {
@@ -32,6 +34,11 @@ type FinalResponse struct {
 
 func main() {
 	r := gin.Default()
+
+	err := godotenv.Load("../.env")
+	if err != nil {
+		log.Println("⚠️  No .env file found, using system env")
+	}
 
 	r.Use(func(c *gin.Context) {
 		origin := os.Getenv("FRONTEND_ORIGIN")
