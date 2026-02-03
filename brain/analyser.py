@@ -2,19 +2,24 @@ import json
 import sys
 
 
-def analyze_performance(data):
-    peak_mem = data.get("peak_memory_kb", 0)
+def analyze(data):
+    ms = data.get("total_time_ms", 0)
+    kb = data.get("peak_memory_kb", 0)
 
-    report = {
-        "status": "success",
-        "suggestion": "Memory usage is fine."
-        if peak_mem < 50000
-        else "High memory usage detected!",
+    insights = []
+    if ms > 1000:
+        insights.append("Execution took over 1 second. Consider optimizing loops.")
+    if kb > 100000:
+        insights.append("High memory footprint detected (>100MB).")
+
+    return {
+        "score": "B" if insights else "A",
+        "suggestions": insights if insights else ["Code looks optimal!"],
     }
-    return report
 
 
 if __name__ == "__main__":
-    raw_input = sys.stdin.read()
-    data = json.loads(raw_input)
-    print(json.dumps(analyze_performance(data)))
+    line = sys.stdin.read()
+    if line:
+        report_data = json.loads(line)
+        print(json.dumps(analyze(report_data)))

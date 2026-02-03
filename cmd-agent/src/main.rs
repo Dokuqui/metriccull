@@ -1,7 +1,15 @@
+use serde::Serialize;
 use std::fs;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
+
+#[derive(Serialize)]
+struct PerformanceReport {
+    total_time_ms: u128,
+    peak_memory_kb: u64,
+    status: String,
+}
 
 fn get_memory_usage(pid: u32) -> u64 {
     let path = format!("/proc/{}/status", pid);
@@ -19,8 +27,6 @@ fn get_memory_usage(pid: u32) -> u64 {
 }
 
 fn main() {
-    println!("🚀 MetricCull Agent Starting...");
-
     let start_time = Instant::now();
     let mut max_memory: u64 = 0;
 
@@ -41,13 +47,11 @@ fn main() {
         thread::sleep(Duration::from_millis(10));
     }
 
-    let duration = start_time.elapsed();
+    let report = PerformanceReport {
+        total_time_ms: start_time.elapsed().as_millis(),
+        peak_memory_kb: max_memory,
+        status: "success".to_string(),
+    };
 
-    println!("--- Performance Report ---");
-    println!("Total Time:  {:?}", duration);
-    println!(
-        "Peak Memory: {} KB ({:.2} MB)",
-        max_memory,
-        max_memory as f64 / 1024.0
-    );
+    println!("{}", serde_json::to_string(&report).unwrap());
 }
