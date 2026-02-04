@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 )
 
@@ -30,6 +32,33 @@ type BrainAnalysis struct {
 type FinalResponse struct {
 	Metrics  RustReport    `json:"metrics"`
 	Analysis BrainAnalysis `json:"analysis"`
+}
+
+func findEntryPoint(dir string) string {
+	priorities := []string{"main.py", "app.py", "run.py", "benchmark.py"}
+	for _, name := range priorities {
+		path := filepath.Join(dir, name)
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	files, _ := filepath.Glob(filepath.Join(dir, "*.py"))
+	if len(files) > 0 {
+		return files[0]
+	}
+	return ""
+}
+
+func cloneRepo(repoURL string) (string, error) {
+	id := uuid.New().String()
+	tempDir := filepath.Join(os.TempDir(), "metriccull-"+id)
+
+	cmd := exec.Command("git", "clone", "--depth", "1", repoURL, tempDir)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git clone failed: %s", string(output))
+	}
+	return tempDir, nil
 }
 
 func main() {
@@ -60,7 +89,20 @@ func main() {
 			return
 		}
 
-		cmd := exec.Command("../cmd-agent/target/debug/cmd-agent")
+		tempDir, err := cloneRepo(job.RepoURL)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clone repository", "details": err.Error()})
+			return
+		}
+		defer os.RemoveAll(tempDir)
+
+		entryFile := findEntryPoint(tempDir)
+		if entryFile == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "No Python entry point found (main.py, etc.)"})
+			return
+		}
+
+		cmd := exec.Command("../cmd-agent/target/debug/cmd-agent", entryFile)
 
 		output, err := cmd.CombinedOutput()
 		if err != nil {

@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::env;
 use std::fs;
 use std::process::{Command, Stdio};
 use std::thread;
@@ -27,15 +28,22 @@ fn get_memory_usage(pid: u32) -> u64 {
 }
 
 fn main() {
+    let args: Vec<String> = env::args().collect();
+    if args.len() < 2 {
+        eprintln!("Error: No target file path provided.");
+        std::process::exit(1);
+    }
+    let target_file = &args[1];
+
     let start_time = Instant::now();
     let mut max_memory: u64 = 0;
 
     let mut child = Command::new("python3")
-        .arg("-c")
-        .arg("import time; x = [i for i in range(10_000_000)]; time.sleep(0.5)")
+        .arg(target_file)
         .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
-        .expect("Failed to start process");
+        .expect("Failed to spawn process");
 
     let pid = child.id();
 
@@ -44,7 +52,12 @@ fn main() {
         if current_mem > max_memory {
             max_memory = current_mem;
         }
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    let final_mem = get_memory_usage(pid);
+    if final_mem > max_memory {
+        max_memory = final_mem;
     }
 
     let report = PerformanceReport {
