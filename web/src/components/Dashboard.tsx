@@ -189,14 +189,15 @@ const SuggestionItem = styled.div`
 export default function Dashboard() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  // https://github.com/alexdedyura/cpu-benchmark
   const [repoUrl, setRepoUrl] = useState(
-    "https://github.com/lucas-mancini/python-pi-benchmark",
+    "https://github.com/scivision/python-performance",
   );
 
   const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
 
   const runProfile = async () => {
-    setData(null); // Clear old data/errors
+    setData(null);
     setLoading(true);
     try {
       const res = await fetch(`${BACKEND_URL}/profile`, {
@@ -233,7 +234,7 @@ export default function Dashboard() {
               onChange={(e) => setRepoUrl(e.target.value)}
             />
             <Button onClick={runProfile} disabled={loading}>
-              {loading ? "Profiling..." : "Analyze Repo"}
+              {loading ? "Calculating Heavy Benchmarks..." : "Analyze Repo"}
             </Button>
           </InputGroup>
         </Header>

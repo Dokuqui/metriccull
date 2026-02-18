@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -102,7 +104,10 @@ func main() {
 			return
 		}
 
-		cmd := exec.Command("../cmd-agent/target/debug/cmd-agent", entryFile)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		cmd := exec.CommandContext(ctx, "../cmd-agent/target/debug/cmd-agent", entryFile)
 
 		output, err := cmd.CombinedOutput()
 		if err != nil {
