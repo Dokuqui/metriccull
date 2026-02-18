@@ -38,8 +38,8 @@ fn main() {
 
     let status = Command::new("python3")
         .arg(target_file)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
         .status()
         .expect("Failed to run process");
 

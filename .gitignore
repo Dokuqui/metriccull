@@ -23,3 +23,5 @@ __pycache__/
 /web/build/
 /web/.vercel
 /web/.env.local
+
+.example.url

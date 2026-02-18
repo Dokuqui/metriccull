@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -143,6 +144,78 @@ func main() {
 		})
 	})
 
+	r.GET("/stream-profile", func(c *gin.Context) {
+		repoURL := c.Query("repo_url")
+		if repoURL == "" {
+			c.JSON(400, gin.H{"error": "repo_url is required"})
+			return
+		}
+
+		c.Writer.Header().Set("Content-Type", "text/event-stream")
+		c.Writer.Header().Set("Cache-Control", "no-cache")
+		c.Writer.Header().Set("Connection", "keep-alive")
+		c.Writer.Header().Set("Transfer-Encoding", "chunked")
+
+		c.SSEvent("log", "Cloning repository...")
+		c.Writer.Flush()
+
+		tempDir, err := cloneRepo(repoURL)
+		if err != nil {
+			c.SSEvent("log", "Clone failed: "+err.Error())
+			return
+		}
+		defer os.RemoveAll(tempDir)
+
+		entryFile := findEntryPoint(tempDir)
+		if entryFile == "" {
+			c.SSEvent("log", "No Python entry point found.")
+			return
+		}
+		c.SSEvent("log", "Found entry point: "+filepath.Base(entryFile))
+
+		cmd := exec.Command("../cmd-agent/target/debug/cmd-agent", entryFile)
+		stdout, _ := cmd.StdoutPipe()
+		cmd.Start()
+
+		scanner := bufio.NewScanner(stdout)
+		var lastLine string
+		for scanner.Scan() {
+			lastLine = scanner.Text()
+
+			if lastLine != "" && lastLine[0] != '{' {
+				c.SSEvent("log", lastLine)
+				c.Writer.Flush()
+			}
+		}
+
+		cmd.Wait()
+
+		var report RustReport
+		json.Unmarshal([]byte(lastLine), &report)
+
+		analysis := getAIAnalysis(report)
+
+		finalResult, _ := json.Marshal(FinalResponse{
+			Metrics:  report,
+			Analysis: analysis,
+		})
+		c.SSEvent("complete", string(finalResult))
+		c.Writer.Flush()
+	})
+
 	fmt.Println("🚀 Gateway running on :8080")
 	r.Run(":8080")
+}
+
+func getAIAnalysis(report RustReport) BrainAnalysis {
+	pythonCmd := exec.Command("python3", "../brain/analyser.py")
+	stdin, _ := pythonCmd.StdinPipe()
+	go func() {
+		defer stdin.Close()
+		json.NewEncoder(stdin).Encode(report)
+	}()
+	brainOutput, _ := pythonCmd.Output()
+	var analysis BrainAnalysis
+	json.Unmarshal(brainOutput, &analysis)
+	return analysis
 }
