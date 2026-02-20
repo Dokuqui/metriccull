@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -20,12 +21,13 @@ import (
 )
 
 type ProfilingRun struct {
-	ID           uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
-	RepoURL      string
-	TotalTimeMs  int64
-	PeakMemoryKb int64
-	Score        string
-	Suggestions  []string `gorm:"serializer:json"`
+	ID           uuid.UUID `json:"id" gorm:"type:uuid;default:gen_random_uuid()"`
+	RepoURL      string    `json:"repo_url"`
+	Version      string    `json:"version"`
+	TotalTimeMs  int64     `json:"total_time_ms"`
+	PeakMemoryKb int64     `json:"peak_memory_kb"`
+	Score        string    `json:"score"`
+	Suggestions  []string  `gorm:"serializer:json" json:"suggestions"`
 	CreatedAt    time.Time
 }
 
@@ -86,6 +88,60 @@ func cloneRepo(repoURL string) (string, error) {
 		return "", fmt.Errorf("git clone failed: %s", string(output))
 	}
 	return tempDir, nil
+}
+
+func installDependencies(dir string, version string, c *gin.Context) error {
+	_, err := exec.LookPath(version)
+	if err != nil {
+		c.SSEvent("log", "⚠️  Version "+version+" not found. Falling back to python3.")
+		c.Writer.Flush()
+		version = "python3"
+	}
+
+	c.SSEvent("log", "Creating venv with "+version+"...")
+	c.Writer.Flush()
+
+	var stderr bytes.Buffer
+	venvCmd := exec.Command(version, "-m", "venv", filepath.Join(dir, "venv"))
+	venvCmd.Stderr = &stderr
+
+	if err := venvCmd.Run(); err != nil {
+		return fmt.Errorf("venv creation failed: %v - %s", err, stderr.String())
+	}
+
+	pipPath := filepath.Join(dir, "venv", "bin", "pip")
+
+	files := []struct {
+		name string
+		args []string
+	}{
+		{"requirements.txt", []string{"install", "-r", "requirements.txt"}},
+		{"pyproject.toml", []string{"install", "."}},
+		{"setup.py", []string{"install", "."}},
+	}
+
+	found := false
+	for _, f := range files {
+		if _, err := os.Stat(filepath.Join(dir, f.name)); err == nil {
+			c.SSEvent("log", "Installing dependencies from "+f.name+"...")
+			c.Writer.Flush()
+
+			cmd := exec.Command(pipPath, f.args...)
+			cmd.Dir = dir
+			if err := cmd.Run(); err == nil {
+				found = true
+			}
+		}
+	}
+
+	if !found {
+		c.SSEvent("log", "No manifest found. Pre-loading benchmark suite (numpy, pandas)...")
+		c.Writer.Flush()
+		exec.Command(pipPath, "install", "numpy", "pandas").Run()
+	}
+
+	c.SSEvent("log", "Dependencies ready.")
+	return nil
 }
 
 func main() {
@@ -178,6 +234,23 @@ func main() {
 		})
 	})
 
+	r.GET("/versions", func(c *gin.Context) {
+		versions := []string{"python3.10", "python3.11", "python3.12", "python3.13"}
+		available := []string{}
+
+		for _, v := range versions {
+			if _, err := exec.LookPath(v); err == nil {
+				available = append(available, v)
+			}
+		}
+
+		if len(available) == 0 {
+			available = append(available, "python3")
+		}
+
+		c.JSON(200, available)
+	})
+
 	r.GET("/history", func(c *gin.Context) {
 		var history []ProfilingRun
 		if err := db.Order("created_at desc").Limit(20).Find(&history).Error; err != nil {
@@ -198,6 +271,7 @@ func main() {
 
 	r.GET("/stream-profile", func(c *gin.Context) {
 		repoURL := c.Query("repo_url")
+		version := c.DefaultQuery("version", "python3")
 		if repoURL == "" {
 			c.JSON(400, gin.H{"error": "repo_url is required"})
 			return
@@ -225,7 +299,14 @@ func main() {
 		}
 		c.SSEvent("log", "Found entry point: "+filepath.Base(entryFile))
 
+		if err := installDependencies(tempDir, version, c); err != nil {
+			c.SSEvent("log", "Dependency error: "+err.Error())
+		}
+
+		venvPython := filepath.Join(tempDir, "venv", "bin", "python3")
+
 		cmd := exec.Command("../cmd-agent/target/debug/cmd-agent", entryFile)
+		cmd.Env = append(os.Environ(), "CUSTOM_PYTHON="+venvPython)
 		stdout, _ := cmd.StdoutPipe()
 		cmd.Start()
 
@@ -247,6 +328,7 @@ func main() {
 
 		newRun := ProfilingRun{
 			RepoURL:      repoURL,
+			Version:      version,
 			TotalTimeMs:  report.TotalTimeMs,
 			PeakMemoryKb: report.PeakMemoryKb,
 			Score:        analysis.Score,

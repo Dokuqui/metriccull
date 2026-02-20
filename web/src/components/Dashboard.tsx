@@ -5,6 +5,7 @@ import styled from "styled-components";
 import Terminal from "./Terminal";
 import MetricsGrid from "./MetricsGrid";
 import HistoryTable from "./HistoryTable";
+import ComparisonOverlay from "./ComparisonOverlay";
 
 const Header = styled.header`
   margin-bottom: 50px;
@@ -99,12 +100,25 @@ export default function Dashboard() {
   const [repoUrl, setRepoUrl] = useState("https://github.com/scivision/python-performance");
   const [logs, setLogs] = useState<string[]>([]);
   const [history, setHistory] = useState<any[]>([]);
+  const [pythonVersion, setPythonVersion] = useState("python3.10");
+  const [availableVersions, setAvailableVersions] = useState<string[]>(["python3"]);
+  const [comparisonRuns, setComparisonRuns] = useState<any[] | null>(null);
 
   useEffect(() => {
     fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/history`)
       .then(res => res.json())
       .then(data => setHistory(data))
       .catch(err => console.error("History fetch failed", err));
+  }, []);
+
+  useEffect(() => {
+    fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/versions`)
+      .then(res => res.json())
+      .then(data => {
+        setAvailableVersions(data);
+        if (data.length > 0) setPythonVersion(data[0]);
+      })
+      .catch(() => console.error("Could not fetch versions"));
   }, []);
 
   const startProfiling = () => {
@@ -122,12 +136,18 @@ export default function Dashboard() {
       const finalData = JSON.parse(e.data);
       setData(finalData);
 
-      setHistory(prev => [{
-        repo: repoUrl,
-        metrics: finalData.metrics,
-        analysis: finalData.analysis,
-        timestamp: new Date().toISOString()
-      }, ...prev]);
+      const newHistoryItem = {
+        id: crypto.randomUUID(),
+        repo_url: repoUrl,
+        version: pythonVersion,
+        total_time_ms: finalData.metrics.total_time_ms,
+        peak_memory_kb: finalData.metrics.peak_memory_kb,
+        score: finalData.analysis.score,
+        suggestions: finalData.analysis.suggestions,
+        created_at: new Date().toISOString()
+      };
+
+      setHistory(prev => [newHistoryItem, ...prev]);
 
       eventSource.close();
       setLoading(false);
@@ -170,6 +190,22 @@ export default function Dashboard() {
               value={repoUrl}
               onChange={(e) => setRepoUrl(e.target.value)}
             />
+            <select
+              value={pythonVersion}
+              onChange={(e) => setPythonVersion(e.target.value)}
+              style={{
+                background: '#1e293b',
+                color: 'white',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '8px',
+                padding: '8px',
+                outline: 'none'
+              }}
+            >
+              {availableVersions.map(v => (
+                <option key={v} value={v}>{v.replace('python', 'Python ')}</option>
+              ))}
+            </select>
             <Button onClick={startProfiling} disabled={loading}>
               {loading ? "Streaming Logs..." : "Analyze Repo"}
             </Button>
@@ -190,7 +226,18 @@ export default function Dashboard() {
             </InsightPanel>
           </div>
         )}
-        <HistoryTable history={history} onClear={handleClearHistory} />
+        <HistoryTable
+          history={history}
+          onClear={handleClearHistory}
+          onCompare={(runs) => setComparisonRuns(runs)}
+        />
+
+        {comparisonRuns && (
+          <ComparisonOverlay
+            runs={comparisonRuns}
+            onClose={() => setComparisonRuns(null)}
+          />
+        )}
       </ContentWrapper>
     </Container>
   );

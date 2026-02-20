@@ -36,7 +36,9 @@ fn main() {
 
     let start_time = Instant::now();
 
-    let status = Command::new("python3")
+    let python_bin = env::var("CUSTOM_PYTHON").unwrap_or_else(|_| "python3".to_string());
+
+    let status = Command::new(python_bin)
         .arg(target_file)
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
