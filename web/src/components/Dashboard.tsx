@@ -1,9 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import styled from "styled-components";
 import Terminal from "./Terminal";
 import MetricsGrid from "./MetricsGrid";
+import HistoryTable from "./HistoryTable";
 
 const Header = styled.header`
   margin-bottom: 50px;
@@ -97,6 +98,14 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [repoUrl, setRepoUrl] = useState("https://github.com/scivision/python-performance");
   const [logs, setLogs] = useState<string[]>([]);
+  const [history, setHistory] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/history`)
+      .then(res => res.json())
+      .then(data => setHistory(data))
+      .catch(err => console.error("History fetch failed", err));
+  }, []);
 
   const startProfiling = () => {
     setData(null);
@@ -110,7 +119,16 @@ export default function Dashboard() {
     eventSource.addEventListener("log", (e) => setLogs(prev => [...prev, e.data]));
 
     eventSource.addEventListener("complete", (e) => {
-      setData(JSON.parse(e.data));
+      const finalData = JSON.parse(e.data);
+      setData(finalData);
+
+      setHistory(prev => [{
+        repo: repoUrl,
+        metrics: finalData.metrics,
+        analysis: finalData.analysis,
+        timestamp: new Date().toISOString()
+      }, ...prev]);
+
       eventSource.close();
       setLoading(false);
     });
@@ -120,6 +138,22 @@ export default function Dashboard() {
       eventSource.close();
       setLoading(false);
     };
+  };
+
+  const handleClearHistory = async () => {
+    if (!window.confirm("Are you sure you want to delete all profiling history?")) return;
+
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/history`, {
+        method: "DELETE",
+      });
+
+      if (res.ok) {
+        setHistory([]);
+      }
+    } catch (err) {
+      console.error("Failed to clear history", err);
+    }
   };
 
   return (
@@ -156,6 +190,7 @@ export default function Dashboard() {
             </InsightPanel>
           </div>
         )}
+        <HistoryTable history={history} onClear={handleClearHistory} />
       </ContentWrapper>
     </Container>
   );

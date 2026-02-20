@@ -15,7 +15,21 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
+
+type ProfilingRun struct {
+	ID           uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
+	RepoURL      string
+	TotalTimeMs  int64
+	PeakMemoryKb int64
+	Score        string
+	Suggestions  []string `gorm:"serializer:json"`
+	CreatedAt    time.Time
+}
+
+var db *gorm.DB
 
 type ProfilingJob struct {
 	RepoURL string `json:"repo_url" binding:"required"`
@@ -35,6 +49,16 @@ type BrainAnalysis struct {
 type FinalResponse struct {
 	Metrics  RustReport    `json:"metrics"`
 	Analysis BrainAnalysis `json:"analysis"`
+}
+
+type HistoryItem struct {
+	ID           string    `json:"id"`
+	RepoURL      string    `json:"repo_url"`
+	TotalTimeMs  int64     `json:"total_time_ms"`
+	PeakMemoryKb int64     `json:"peak_memory_kb"`
+	Score        string    `json:"score"`
+	Suggestions  []string  `json:"suggestions"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 func findEntryPoint(dir string) string {
@@ -67,10 +91,20 @@ func cloneRepo(repoURL string) (string, error) {
 func main() {
 	r := gin.Default()
 
-	err := godotenv.Load("../.env")
+	var err error
+
+	err = godotenv.Load("../.env")
 	if err != nil {
 		log.Println("⚠️  No .env file found, using system env")
 	}
+
+	dsn := os.Getenv("DATABASE_URL")
+	db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		log.Fatalf("Failed to connect to DB: %v", err)
+	}
+
+	db.AutoMigrate(&ProfilingRun{})
 
 	r.Use(func(c *gin.Context) {
 		origin := os.Getenv("FRONTEND_ORIGIN")
@@ -144,6 +178,24 @@ func main() {
 		})
 	})
 
+	r.GET("/history", func(c *gin.Context) {
+		var history []ProfilingRun
+		if err := db.Order("created_at desc").Limit(20).Find(&history).Error; err != nil {
+			c.JSON(500, gin.H{"error": "Failed to fetch history"})
+			return
+		}
+		c.JSON(200, history)
+	})
+
+	r.DELETE("/history", func(c *gin.Context) {
+		if err := db.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&ProfilingRun{}).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clear history"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "History cleared successfully"})
+	})
+
 	r.GET("/stream-profile", func(c *gin.Context) {
 		repoURL := c.Query("repo_url")
 		if repoURL == "" {
@@ -181,7 +233,6 @@ func main() {
 		var lastLine string
 		for scanner.Scan() {
 			lastLine = scanner.Text()
-
 			if lastLine != "" && lastLine[0] != '{' {
 				c.SSEvent("log", lastLine)
 				c.Writer.Flush()
@@ -192,8 +243,19 @@ func main() {
 
 		var report RustReport
 		json.Unmarshal([]byte(lastLine), &report)
-
 		analysis := getAIAnalysis(report)
+
+		newRun := ProfilingRun{
+			RepoURL:      repoURL,
+			TotalTimeMs:  report.TotalTimeMs,
+			PeakMemoryKb: report.PeakMemoryKb,
+			Score:        analysis.Score,
+			Suggestions:  analysis.Suggestions,
+		}
+
+		if err := db.Create(&newRun).Error; err != nil {
+			log.Printf("Failed to save to DB: %v", err)
+		}
 
 		finalResult, _ := json.Marshal(FinalResponse{
 			Metrics:  report,
