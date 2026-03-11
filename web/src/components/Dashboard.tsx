@@ -6,6 +6,9 @@ import Terminal from "./Terminal";
 import MetricsGrid from "./MetricsGrid";
 import HistoryTable from "./HistoryTable";
 import ComparisonOverlay from "./ComparisonOverlay";
+import FunctionBreakdown from "./FunctionBreakdown";
+import { generateReport } from "@/utils/reportGenerator";
+import LiveChart from "./LiveChart";
 
 const Header = styled.header`
   margin-bottom: 50px;
@@ -103,6 +106,8 @@ export default function Dashboard() {
   const [pythonVersion, setPythonVersion] = useState("python3.10");
   const [availableVersions, setAvailableVersions] = useState<string[]>(["python3"]);
   const [comparisonRuns, setComparisonRuns] = useState<any[] | null>(null);
+  const [liveMemory, setLiveMemory] = useState<number>(0);
+  const [chartData, setChartData] = useState<{ time: number, memory: number }[]>([]);
 
   useEffect(() => {
     fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/history`)
@@ -122,19 +127,35 @@ export default function Dashboard() {
   }, []);
 
   const startProfiling = () => {
+    setLiveMemory(0);
     setData(null);
     setLogs(["Connecting to profiler..."]);
     setLoading(true);
+    setChartData([]);
 
     const eventSource = new EventSource(
-      `${process.env.NEXT_PUBLIC_BACKEND_URL}/stream-profile?repo_url=${encodeURIComponent(repoUrl)}`
-    );
-
+      `${process.env.NEXT_PUBLIC_BACKEND_URL}/stream-profile?repo_url=${encodeURIComponent(repoUrl)}&version=${encodeURIComponent(pythonVersion)}`
+    )
     eventSource.addEventListener("log", (e) => setLogs(prev => [...prev, e.data]));
+
+    eventSource.addEventListener("vitals", (e) => {
+      const kb = parseInt(e.data);
+      if (!isNaN(kb)) {
+        const mb = kb / 1024;
+        setLiveMemory(mb);
+        setChartData(prev => [...prev.slice(-49), { time: Date.now(), memory: mb }]);
+      }
+    });
 
     eventSource.addEventListener("complete", (e) => {
       const finalData = JSON.parse(e.data);
-      setData(finalData);
+
+      const enrichedData = {
+        ...finalData,
+        repo_url: repoUrl
+      };
+
+      setData(enrichedData);
 
       const newHistoryItem = {
         id: crypto.randomUUID(),
@@ -212,7 +233,34 @@ export default function Dashboard() {
           </InputGroup>
         </Header>
 
-        {(loading || logs.length > 0) && <Terminal logs={logs} />}
+        {(loading || logs.length > 0) && (
+          <div style={{ width: '100%', marginTop: '20px' }}>
+            <div style={{
+              marginBottom: '10px',
+              color: '#6366f1',
+              fontSize: '0.9rem',
+              fontWeight: 'bold',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}>
+              <span style={{
+                width: '8px',
+                height: '8px',
+                background: '#6366f1',
+                borderRadius: '50%',
+                display: loading ? 'inline-block' : 'none',
+              }} className="pulse-animation" />
+              📡 Live Memory Usage: {liveMemory > 0 ? `${liveMemory.toFixed(2)} MB` : 'Waiting for execution...'}
+            </div>
+
+            <LiveChart data={chartData} />
+
+            <div style={{ marginTop: '20px' }}>
+              <Terminal logs={logs} />
+            </div>
+          </div>
+        )}
 
         {data?.metrics && (
           <div style={{ marginTop: '32px' }}>
@@ -225,6 +273,26 @@ export default function Dashboard() {
               ))}
             </InsightPanel>
           </div>
+        )}
+
+        {data?.profile && <FunctionBreakdown profile={data.profile} />}
+
+        {data && (
+          <button
+            onClick={() => generateReport(data)}
+            style={{
+              background: 'rgba(99, 102, 241, 0.1)',
+              border: '1px solid #6366f1',
+              color: '#6366f1',
+              padding: '8px 16px',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontWeight: 'bold',
+              marginTop: '10px'
+            }}
+          >
+            Download Performance Report (.md)
+          </button>
         )}
         <HistoryTable
           history={history}

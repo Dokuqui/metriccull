@@ -38,12 +38,16 @@ fn main() {
 
     let python_bin = env::var("CUSTOM_PYTHON").unwrap_or_else(|_| "python3".to_string());
 
-    let status = Command::new(python_bin)
+    let status = Command::new(&python_bin)
+        .arg("-m")
+        .arg("cProfile")
+        .arg("-o")
+        .arg("profile_data.prof")
         .arg(target_file)
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()
-        .expect("Failed to run process");
+        .expect("Failed to run profiler");
 
     let duration = start_time.elapsed().as_millis();
     let peak_mem = get_peak_memory();

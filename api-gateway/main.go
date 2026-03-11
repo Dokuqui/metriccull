@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -51,6 +52,7 @@ type BrainAnalysis struct {
 type FinalResponse struct {
 	Metrics  RustReport    `json:"metrics"`
 	Analysis BrainAnalysis `json:"analysis"`
+	Profile  []interface{} `json:"profile"`
 }
 
 type HistoryItem struct {
@@ -310,6 +312,27 @@ func main() {
 		stdout, _ := cmd.StdoutPipe()
 		cmd.Start()
 
+		stopMonitoring := make(chan bool)
+		go func() {
+			for {
+				select {
+				case <-stopMonitoring:
+					return
+				default:
+					if cmd.Process != nil {
+						cmdStr := fmt.Sprintf("ps -o rss= -p %d,$(pgrep -P %d) 2>/dev/null | awk '{s+=$1} END {print s}'", cmd.Process.Pid, cmd.Process.Pid)
+						out, _ := exec.Command("sh", "-c", cmdStr).Output()
+
+						rss := strings.TrimSpace(string(out))
+						if rss != "" && rss != "0" {
+							c.SSEvent("vitals", rss)
+							c.Writer.Flush()
+						}
+					}
+					time.Sleep(50 * time.Millisecond)
+				}
+			}
+		}()
 		scanner := bufio.NewScanner(stdout)
 		var lastLine string
 		for scanner.Scan() {
@@ -321,10 +344,24 @@ func main() {
 		}
 
 		cmd.Wait()
+		stopMonitoring <- true
+
+		profFile := "profile_data.prof"
+
+		convertCmd := exec.Command("python3", "../brain/profile_converter.py", profFile)
+		profileOutput, err := convertCmd.Output()
+
+		var profileData []interface{}
+		if err == nil {
+			json.Unmarshal(profileOutput, &profileData)
+		} else {
+			log.Printf("Profile conversion failed: %v", err)
+			profileData = []interface{}{}
+		}
 
 		var report RustReport
 		json.Unmarshal([]byte(lastLine), &report)
-		analysis := getAIAnalysis(report)
+		analysis := getAIAnalysis(report, profileData)
 
 		newRun := ProfilingRun{
 			RepoURL:      repoURL,
@@ -342,22 +379,32 @@ func main() {
 		finalResult, _ := json.Marshal(FinalResponse{
 			Metrics:  report,
 			Analysis: analysis,
+			Profile:  profileData,
 		})
 		c.SSEvent("complete", string(finalResult))
 		c.Writer.Flush()
+
+		os.Remove(profFile)
 	})
 
 	fmt.Println("🚀 Gateway running on :8080")
 	r.Run(":8080")
 }
 
-func getAIAnalysis(report RustReport) BrainAnalysis {
+func getAIAnalysis(report RustReport, profile []interface{}) BrainAnalysis {
+	payload := map[string]interface{}{
+		"metrics":         report,
+		"top_bottlenecks": profile,
+	}
+
 	pythonCmd := exec.Command("python3", "../brain/analyser.py")
 	stdin, _ := pythonCmd.StdinPipe()
+
 	go func() {
 		defer stdin.Close()
-		json.NewEncoder(stdin).Encode(report)
+		json.NewEncoder(stdin).Encode(payload)
 	}()
+
 	brainOutput, _ := pythonCmd.Output()
 	var analysis BrainAnalysis
 	json.Unmarshal(brainOutput, &analysis)
