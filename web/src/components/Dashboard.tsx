@@ -175,7 +175,7 @@ export default function Dashboard() {
     });
 
     eventSource.onerror = () => {
-      setLogs(prev => [...prev, "❌ Connection lost."]);
+      setLogs(prev => [...prev, "Connection lost."]);
       eventSource.close();
       setLoading(false);
     };
@@ -251,7 +251,7 @@ export default function Dashboard() {
                 borderRadius: '50%',
                 display: loading ? 'inline-block' : 'none',
               }} className="pulse-animation" />
-              📡 Live Memory Usage: {liveMemory > 0 ? `${liveMemory.toFixed(2)} MB` : 'Waiting for execution...'}
+              Live Memory Usage: {liveMemory > 0 ? `${liveMemory.toFixed(2)} MB` : 'Waiting for execution...'}
             </div>
 
             <LiveChart data={chartData} />
